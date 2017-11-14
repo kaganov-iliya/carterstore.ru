@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<modification>
+	<name>Шаблон Revolution | Фикс фильтра</name>
+	<code>revolution_filter</code>
+	<version>4.x</version>
+	<author>pikitos</author>
+	<link></link>
+
+	<file path="catalog/model/catalog/product.php">
+		<operation error="skip">
+			<search><![CDATA[$sql = "SELECT COUNT(DISTINCT p.product_id) AS total";]]></search>
+			<add position="replace"><![CDATA[
+				$sql = "SELECT COUNT(*) as total FROM (SELECT p.product_id, p.price, (SELECT price FROM " . DB_PREFIX . "product_special ps WHERE ps.product_id = p.product_id AND ps.customer_group_id = '" . (int)$this->config->get('config_customer_group_id') . "' AND ((ps.date_start = '0000-00-00' OR ps.date_start < NOW()) AND (ps.date_end = '0000-00-00' OR ps.date_end > NOW())) ORDER BY ps.priority ASC, ps.price ASC LIMIT 1) AS special, (SELECT price FROM " . DB_PREFIX . "product_discount pd2 WHERE pd2.product_id = p.product_id AND pd2.customer_group_id = '" . (int)$this->config->get('config_customer_group_id') . "' AND pd2.quantity > 0 AND ((pd2.date_start = '0000-00-00' OR pd2.date_start < NOW()) AND (pd2.date_end = '0000-00-00' OR pd2.date_end > NOW())) ORDER BY pd2.priority ASC, pd2.price ASC LIMIT 1) AS discount";
+				if ($this->config->get('config_tax')) {
+					$sql .= ", (SELECT SUM(rate) AS summ FROM " . DB_PREFIX . "tax_rate trt1 WHERE trt1.type = 'P' AND trt1.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rule trl1 WHERE trl1.tax_class_id = p.tax_class_id) AND trt1.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rate_to_customer_group trtcg1 WHERE trtcg1.customer_group_id = '" . (int)$this->config->get('config_customer_group_id') . "')) AS ptax, (SELECT SUM(rate) AS summ FROM " . DB_PREFIX . "tax_rate trt2 WHERE trt2.type = 'F' AND trt2.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rule trl2 WHERE trl2.tax_class_id = p.tax_class_id) AND trt2.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rate_to_customer_group trtcg2 WHERE trtcg2.customer_group_id = '" . (int)$this->config->get('config_customer_group_id') . "'))AS ftax";
+				}
+			]]></add>
+		</operation>
+		<operation error="skip">
+			<search><![CDATA[$sql .= " LEFT JOIN " . DB_PREFIX . "product_description]]></search>
+			<add position="before"><![CDATA[
+				if (!empty($data['filter_options'])) {
+					foreach ($data['filter_options'] as $i => $filter_option) {
+						$sql .= " LEFT JOIN " . DB_PREFIX . "product_option_value po" . (int)$i . " ON (po" . (int)$i . ".product_id = p.product_id AND po" . (int)$i . ".option_id = '" . (int)$filter_option['option_id'] . "')";
+					}
+				}
+				if (!empty($data['filter_attributes'])) {
+					foreach ($data['filter_attributes'] as $i => $filter_attribute) {
+						$sql .= " LEFT JOIN " . DB_PREFIX . "product_attribute pa" . (int)$i . " ON (pa" . (int)$i . ".product_id = p.product_id AND pa" . (int)$i . ".attribute_id = '" . (int)$filter_attribute['attribute_id'] . "' AND pa" . (int)$i . ".language_id = '" . (int)$this->config->get('config_language_id') . "')";
+					}
+				}
+			]]></add>
+		</operation>
+		<operation error="skip">
+			<search><![CDATA[if (!empty($data['filter_name']) || !empty($data['filter_tag'])) {]]></search>
+			<add position="before"><![CDATA[
+				if (!empty($data['filter_options'])) {
+					foreach ($data['filter_options'] as $i => $filter_option) {
+						if (is_array($filter_option['option_value'])) {
+							$implode = array();
+							foreach ($filter_option['option_value'] as $value_id) {
+								$implode[] = (int) $value_id;
+							}
+							$sql .= " AND po" . (int)$i . ".option_value_id IN (" . implode(',', $implode ) . ")";
+						}
+						 else {
+							$sql .= " AND po" . (int)$i . ".option_value_id = '" . $filter_option['option_value'] . "'";
+						}
+					}
+				}
+				$d = $this->config->get('revtheme_filter')['razdelitel'];
+				if (!empty($data['filter_attributes'])) {
+					foreach ($data['filter_attributes'] as $i => $filter_attribute) {
+						if (is_array($filter_attribute['attribute_value'])) {
+							$implode = array();
+							foreach ($filter_attribute['attribute_value'] as $text) {
+								$implode[] = "(pa" . (int)$i . ".text = '" . $this->db->escape($text) . "' OR pa" . (int)$i . ".text like '" . $this->db->escape($text) . $d . "%' OR pa" . (int)$i . ".text like '%" . $d . $this->db->escape($text) . "' OR pa" . (int)$i . ".text like '%" . $d . $this->db->escape($text) . $d . "%')";
+							}
+							$sql .= " AND pa" . (int)$i . ".attribute_id = " . (int)$filter_attribute['attribute_id'] . " AND  (" . implode(' OR ', $implode) . ")";
+						} else {
+							$sql .= " AND pa" . (int)$i . ".text = '" . $this->db->escape($filter_attribute['attribute_value']) . "'";
+						}
+					}
+				}
+				if (isset($data['filter_instock']) && $data['filter_instock']) {
+					$sql .= " AND p.quantity > 0";
+				}
+			]]></add>
+		</operation>
+		<operation error="skip">
+			<search><![CDATA[if (!empty($data['filter_manufacturer_id'])) {]]></search>
+			<add position="replace" offset="2"><![CDATA[
+			if (!empty($data['filter_manufacturer_id'])) {
+				if (is_array($data['filter_manufacturer_id'])) {
+					$implode = array();
+					foreach ($data['filter_manufacturer_id'] as $man_id) {
+						$implode[] = (int) $man_id;
+					}
+					$sql .= " AND p.manufacturer_id IN (" . implode(',', $implode) . ")";
+				}
+				 else {
+					$sql .= " AND p.manufacturer_id = '" . (int)$data['filter_manufacturer_id'] . "'";
+				}
+			}
+			$sql .= " GROUP BY p.product_id";
+			if ($this->config->get('config_tax')) {
+				if (!empty($data['filter_price_min'])) {
+					if (!$data['filter_instock']) {
+						$sql .= " HAVING ((CASE WHEN special IS NOT NULL THEN special + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN special * (ptax / 100) ELSE 0 END) WHEN discount IS NOT NULL THEN discount + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN discount * (ptax / 100) ELSE 0 END) ELSE p.price + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN p.price * (ptax / 100) ELSE 0 END) END) >= '" . (int)$data['filter_price_min'] . "' OR (CASE WHEN special IS NOT NULL THEN special + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN special * (ptax / 100) ELSE 0 END) WHEN discount IS NOT NULL THEN discount + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN discount * (ptax / 100) ELSE 0 END) ELSE p.price + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN p.price * (ptax / 100) ELSE 0 END) END) = 0)";
+					} else {
+						$sql .= " HAVING (CASE WHEN special IS NOT NULL THEN special + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN special * (ptax / 100) ELSE 0 END) WHEN discount IS NOT NULL THEN discount + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN discount * (ptax / 100) ELSE 0 END) ELSE p.price + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN p.price * (ptax / 100) ELSE 0 END) END) >= '" . (int)$data['filter_price_min'] . "'";
+					}
+				}
+				if (!empty($data['filter_price_max'])) {
+					if (!empty($data['filter_price_min'])) {
+						$sql .= " AND";
+					}
+					 else {
+						$sql .= " HAVING";
+					}
+					$sql .= " (CASE WHEN special IS NOT NULL THEN special + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN special * (ptax / 100) ELSE 0 END) WHEN discount IS NOT NULL THEN discount + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN discount * (ptax / 100) ELSE 0 END) ELSE p.price + (CASE WHEN ftax IS NOT NULL THEN ftax ELSE 0 END) + (CASE WHEN ftax IS NOT NULL THEN p.price * (ptax / 100) ELSE 0 END) END) <= '" . (int)$data['filter_price_max'] . "'";
+				}
+			} else {
+				if (!empty($data['filter_price_min'])) {
+					if (!$data['filter_instock']) {
+						$sql .= " HAVING ((CASE WHEN special IS NOT NULL THEN special WHEN discount IS NOT NULL THEN discount ELSE p.price END) >= '" . (int)$data['filter_price_min'] . "' OR (CASE WHEN special IS NOT NULL THEN special WHEN discount IS NOT NULL THEN discount ELSE p.price END) = 0)";
+					} else {
+						$sql .= " HAVING (CASE WHEN special IS NOT NULL THEN special WHEN discount IS NOT NULL THEN discount ELSE p.price END) >= '" . (int)$data['filter_price_min'] . "'";
+					}
+				}
+				if (!empty($data['filter_price_max'])) {
+					if (!empty($data['filter_price_min'])) {
+						$sql .= " AND";
+					}
+					 else {
+						$sql .= " HAVING";
+					}
+					$sql .= " (CASE WHEN special IS NOT NULL THEN special WHEN discount IS NOT NULL THEN discount ELSE p.price END) <= '" . (int)$data['filter_price_max'] . "'";
+				}
+			}
+			if (!empty($data['filter_day'])) {
+				$sql .= " AND p.date_added BETWEEN '" . $data['filter_day'] . "' AND NOW()";
+			}
+			]]></add>
+		</operation>
+		<operation error="skip">
+			<search><![CDATA[public function getProfile(]]></search>
+			<add position="before" offset="6"><![CDATA[
+				$sql .= ") as total";
+			]]></add>
+		</operation>
+		<operation error="skip">
+			<search><![CDATA[ORDER BY ps.priority ASC, ps.price ASC LIMIT 1) AS special";]]></search>
+			<add position="after"><![CDATA[
+				if ($this->config->get('config_tax')) {
+					$sql .= ", (SELECT SUM(rate) AS summ FROM " . DB_PREFIX . "tax_rate trt1 WHERE trt1.type = 'P' AND trt1.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rule trl1 WHERE trl1.tax_class_id = p.tax_class_id) AND trt1.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rate_to_customer_group trtcg1 WHERE trtcg1.customer_group_id = '" . (int)$this->config->get('config_customer_group_id') . "')) AS ptax, (SELECT SUM(rate) AS summ FROM " . DB_PREFIX . "tax_rate trt2 WHERE trt2.type = 'F' AND trt2.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rule trl2 WHERE trl2.tax_class_id = p.tax_class_id) AND trt2.tax_rate_id IN (SELECT tax_rate_id FROM " . DB_PREFIX . "tax_rate_to_customer_group trtcg2 WHERE trtcg2.customer_group_id = '" . (int)$this->config->get('config_customer_group_id') . "'))AS ftax";
+				}
+			]]></add>
+		</operation>
+		<operation error="skip">
+			<search><![CDATA[$sql .= " AND p2c.category_id = '" . (int)$data['filter_category_id'] . "'";]]></search>
+			<add position="replace"><![CDATA[
+				if (!empty($data['filter_categories'])) {
+					if (is_array($data['filter_categories'])) {
+						$implode = array();
+						foreach ($data['filter_categories'] as $cat_id) {
+							$implode[] = (int)$cat_id;
+						}
+						$sql .= " AND p2c.category_id IN (" . implode(',', $implode) . ")";
+					}
+					 else {
+						$sql .= " AND p2c.category_id = '" . (int)$data['filter_categories'] . "'";
+					}
+				} else {
+					$sql .= " AND p2c.category_id = '" . (int)$data['filter_category_id'] . "'";
+				}
+			]]></add>
+		</operation>
+	</file>
+	
+</modification>
